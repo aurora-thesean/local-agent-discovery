@@ -1,0 +1,27 @@
+{
+  "name": "sesh-hound",
+  "version": "1.0.0",
+  "description": "Sniff out every Claude Code, Codex, and VS Code Copilot Chat session spawned from a given folder — across Windows, macOS, and Linux.",
+  "bin": {
+    "sesh-hound": "./bin/sesh-hound.js"
+  },
+  "engines": {
+    "node": ">=14"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "keywords": [
+    "claude-code",
+    "codex",
+    "copilot",
+    "cli",
+    "agent",
+    "sessions",
+    "swarm"
+  ],
+  "license": "MIT",
+  "author": "ottopoet-thesean"
+}
