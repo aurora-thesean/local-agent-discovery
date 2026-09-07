@@ -74,6 +74,63 @@ function fileMTime(p) {
   try { return fs.statSync(p).mtime; } catch { return null; }
 }
 
+// ---------- Title resolution ----------
+// Each harness stores its live, user/agent-renamable session title
+// differently (see SKILL-OF/local-agent-discovery memory on this). Resolve
+// it here so a caller never has to guess which session a bare UUID is —
+// resemblance (rank/suit/deck) is not identity; a real title, or an honest
+// "still default" flag, is.
+const TITLE_HEAD_BYTES = 65536;
+const TITLE_TAIL_BYTES = 65536;
+
+function resolveClaudeTitle(fullPath) {
+  // customTitle can be set at launch (near the top) or renamed mid-session
+  // (appended later) — check both ends without reading the whole file,
+  // same bounded-read discipline as the cwd scan above. A later occurrence
+  // wins if both ends carry one.
+  let head = '', tail = '';
+  try {
+    const size = fs.statSync(fullPath).size;
+    const fd = fs.openSync(fullPath, 'r');
+    const headBuf = Buffer.alloc(Math.min(TITLE_HEAD_BYTES, size));
+    fs.readSync(fd, headBuf, 0, headBuf.length, 0);
+    head = headBuf.toString('utf8');
+    if (size > TITLE_HEAD_BYTES) {
+      const tailLen = Math.min(TITLE_TAIL_BYTES, size);
+      const tailBuf = Buffer.alloc(tailLen);
+      fs.readSync(fd, tailBuf, 0, tailLen, size - tailLen);
+      tail = tailBuf.toString('utf8');
+    }
+    fs.closeSync(fd);
+  } catch { return null; }
+  const re = /"customTitle":"([^"]*)"/g;
+  let last = null, m;
+  for (const chunk of [head, tail]) {
+    re.lastIndex = 0;
+    while ((m = re.exec(chunk))) last = m[1];
+  }
+  return last;
+}
+
+let _codexTitleDb = undefined; // undefined = not yet attempted, null = unavailable
+function resolveCodexTitle(threadId) {
+  if (_codexTitleDb === undefined) {
+    _codexTitleDb = null;
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const dbPath = path.join(HOME, '.codex', 'sqlite', 'codex-dev.db');
+      if (fs.existsSync(dbPath)) _codexTitleDb = new DatabaseSync(dbPath, { readOnly: true });
+    } catch { _codexTitleDb = null; }
+  }
+  if (!_codexTitleDb) return null;
+  try {
+    const row = _codexTitleDb
+      .prepare('SELECT display_title FROM local_thread_catalog WHERE thread_id = ?')
+      .get(threadId);
+    return row ? row.display_title : null;
+  } catch { return null; }
+}
+
 const results = [];
 
 // ---------- Claude Code ----------
@@ -99,12 +156,15 @@ function scanClaudeCode() {
         if (m) cwd = m[1].replace(/\\\\/g, '\\');
       } catch { continue; }
       if (matches(cwd)) {
+        const title = resolveClaudeTitle(fullPath);
         results.push({
           tool: 'claude-code',
           sessionId: f.replace(/\.jsonl$/, ''),
           cwd,
           file: fullPath,
           mtime: fileMTime(fullPath),
+          title,
+          needsReview: !title,
         });
       }
     }
@@ -135,12 +195,15 @@ function scanCodex() {
           if (cwdM) cwd = cwdM[1].replace(/\\\\/g, '\\');
         } catch { continue; }
         if (matches(cwd)) {
+          const title = resolveCodexTitle(sessionId);
           results.push({
             tool: 'codex',
             sessionId: sessionId || path.basename(full),
             cwd,
             file: full,
             mtime: fileMTime(full),
+            title,
+            needsReview: !title,
           });
         }
       }
@@ -201,6 +264,8 @@ function scanVSCodeCopilot() {
           cwd: folderPath,
           file: full,
           mtime: fileMTime(full),
+          title: null, // no known title store found yet for this tool
+          needsReview: true,
         });
       }
     }
@@ -223,8 +288,15 @@ if (jsonOut) {
   for (const r of results) {
     const mtimeStr = r.mtime ? r.mtime.toISOString() : 'unknown';
     console.log(`  [${r.tool}] ${r.sessionId}  (last active: ${mtimeStr})`);
+    if (r.title) {
+      console.log(`      title: ${r.title}`);
+    } else {
+      console.log(`      title: (none set — needs chat analysis to identify)`);
+    }
     console.log(`      cwd:  ${r.cwd}`);
     console.log(`      file: ${r.file}`);
   }
-  console.log(`\n${results.length} session${results.length === 1 ? '' : 's'} found.`);
+  const needingReview = results.filter(r => r.needsReview).length;
+  console.log(`\n${results.length} session${results.length === 1 ? '' : 's'} found` +
+    (needingReview ? `, ${needingReview} with no title (identity needs chat analysis).` : '.'));
 }
