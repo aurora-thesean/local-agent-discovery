@@ -216,6 +216,8 @@ scanClaudeCode();
 scanCodex();
 scanVSCodeCopilot();
 
+// Newest-first: discovery tools default to most-recent-on-top.
+// Q-semver index ordering (oldest=0) is a consumer concern, not sesh-hound's.
 results.sort((a, b) => (b.birthtime || 0) - (a.birthtime || 0));
 
 if (jsonOut) {
