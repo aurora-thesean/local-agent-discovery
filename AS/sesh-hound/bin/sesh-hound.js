@@ -70,8 +70,13 @@ function matches(cwd) {
   return n === target || n.startsWith(target + '/') || target.startsWith(n + '/');
 }
 
-function fileMTime(p) {
-  try { return fs.statSync(p).mtime; } catch { return null; }
+function fileTimes(p) {
+  try {
+    const s = fs.statSync(p);
+    // birthtimeMs is 0 on filesystems that don't support birth time — fall back to mtime.
+    const birthtime = s.birthtimeMs > 0 ? s.birthtime : s.mtime;
+    return { mtime: s.mtime, birthtime };
+  } catch { return { mtime: null, birthtime: null }; }
 }
 
 const results = [];
@@ -104,7 +109,7 @@ function scanClaudeCode() {
           sessionId: f.replace(/\.jsonl$/, ''),
           cwd,
           file: fullPath,
-          mtime: fileMTime(fullPath),
+          ...fileTimes(fullPath),
         });
       }
     }
@@ -140,7 +145,7 @@ function scanCodex() {
             sessionId: sessionId || path.basename(full),
             cwd,
             file: full,
-            mtime: fileMTime(full),
+            ...fileTimes(full),
           });
         }
       }
@@ -200,7 +205,7 @@ function scanVSCodeCopilot() {
           sessionId: f.replace(/\.jsonl?$/, ''),
           cwd: folderPath,
           file: full,
-          mtime: fileMTime(full),
+          ...fileTimes(full),
         });
       }
     }
@@ -211,7 +216,7 @@ scanClaudeCode();
 scanCodex();
 scanVSCodeCopilot();
 
-results.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+results.sort((a, b) => (b.birthtime || 0) - (a.birthtime || 0));
 
 if (jsonOut) {
   console.log(JSON.stringify(results, null, 2));
@@ -221,8 +226,9 @@ if (jsonOut) {
     console.log('  Nothing here — no scent trail from this folder.');
   }
   for (const r of results) {
+    const birthtimeStr = r.birthtime ? r.birthtime.toISOString() : 'unknown';
     const mtimeStr = r.mtime ? r.mtime.toISOString() : 'unknown';
-    console.log(`  [${r.tool}] ${r.sessionId}  (last active: ${mtimeStr})`);
+    console.log(`  [${r.tool}] ${r.sessionId}  (created: ${birthtimeStr}  last active: ${mtimeStr})`);
     console.log(`      cwd:  ${r.cwd}`);
     console.log(`      file: ${r.file}`);
   }
